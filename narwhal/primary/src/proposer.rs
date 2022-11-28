@@ -112,6 +112,7 @@ impl Proposer {
 
     async fn make_header(&mut self) -> DagResult<()> {
         // Make a new header.
+        // MASATODO: change header structure
         let num_of_digests = self.digests.len().min(self.max_header_num_of_batches);
         let mut header = Header::new(
             self.name.clone(),
@@ -267,6 +268,7 @@ impl Proposer {
             let enough_digests = self.digests.len() >= self.header_num_of_batches_threshold;
             let mut timer_expired = timer.is_elapsed();
 
+            // MASATODO: change round change condition
             if (timer_expired || (enough_digests && advance)) && enough_parents {
                 if timer_expired && matches!(self.network_model, NetworkModel::PartiallySynchronous)
                 {

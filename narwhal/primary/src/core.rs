@@ -169,6 +169,7 @@ impl Core {
         self
     }
 
+    // MASATODO: process own header
     #[instrument(level = "debug", skip_all, fields(header_digest = ?header.digest()))]
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
         if header.epoch < self.committee.epoch() {
@@ -200,8 +201,11 @@ impl Core {
 
         // Process the header.
         self.process_header(&header).await
+
+        // MASATODO: send previous round's votes here
     }
 
+    // MASATODO: process header
     #[async_recursion]
     #[instrument(level = "debug", skip_all, fields(header_digest = ?header.digest()))]
     async fn process_header(&mut self, header: &Header) -> DagResult<()> {
@@ -330,6 +334,9 @@ impl Core {
                 }
             }
         }
+
+        // MASATODO: do not send vote
+        // MASATODO: create and process vote and certificate here
         self.send_vote(header).await
     }
 
@@ -348,6 +355,7 @@ impl Core {
                 error!("Failed to process our own vote: {}", e.to_string());
             }
         } else {
+            // MASATODO: do not send vote to other nodes
             let handler = self
                 .network
                 .send(
@@ -397,6 +405,8 @@ impl Core {
                 .into_iter()
                 .map(|(_, _, network_key)| network_key)
                 .collect();
+
+            // MASATODO: do not bloadcast Certificate to other nodes
             let message = PrimaryMessage::Certificate(certificate.clone());
             let handlers = self.network.broadcast(network_keys, &message).await;
             self.cancel_handlers
@@ -661,6 +671,7 @@ impl Core {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
+                        // MASATODO: receive header from primary layer
                         PrimaryMessage::Header(header) => {
                             match self.sanitize_header(&header).await {
                                 Ok(()) => self.process_header(&header).await,
