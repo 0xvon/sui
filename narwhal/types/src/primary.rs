@@ -81,6 +81,7 @@ pub struct Header {
     #[serde(with = "indexmap::serde_seq")]
     pub payload: IndexMap<BatchDigest, WorkerId>,
     pub parents: BTreeSet<CertificateDigest>,
+    pub prev_votes: Vec<Vote>,
     pub id: HeaderDigest,
     pub signature: Signature,
 }
@@ -96,6 +97,7 @@ impl HeaderBuilder {
             epoch: self.epoch.unwrap(),
             payload: self.payload.unwrap(),
             parents: self.parents.unwrap(),
+            prev_votes: self.prev_votes.unwrap(),
             id: HeaderDigest::default(),
             signature: Signature::default(),
         };
@@ -127,6 +129,7 @@ impl Header {
         epoch: Epoch,
         payload: IndexMap<BatchDigest, WorkerId>,
         parents: BTreeSet<CertificateDigest>,
+        prev_votes: Vec<Vote>,
         signature_service: &mut SignatureService<Signature>,
     ) -> Self {
         let header = Self {
@@ -135,6 +138,7 @@ impl Header {
             epoch,
             payload,
             parents,
+            prev_votes,
             id: HeaderDigest::default(),
             signature: Signature::default(),
         };
@@ -218,8 +222,12 @@ impl Hash for Header {
                 hasher.update(Digest::from(*x));
                 hasher.update(y.to_le_bytes());
             }
-            for x in self.parents.iter() {
-                hasher.update(Digest::from(*x))
+            // MASATODO: do not include parents to hash
+            // for x in self.parents.iter() {
+            //     hasher.update(Digest::from(*x))
+            // }
+            for x in self.prev_votes.iter() {
+                hasher.update(Digest::from(x.digest()))
             }
         };
         HeaderDigest(fastcrypto::blake2b_256(hasher_update))
@@ -255,7 +263,7 @@ impl PartialEq for Header {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default, MallocSizeOf)]
 pub struct Vote {
     pub id: HeaderDigest,
     pub round: Round,
@@ -266,6 +274,18 @@ pub struct Vote {
 }
 
 impl Vote {
+    pub fn genesis(committee: &Committee) -> Vec<Self> {
+        committee
+            .authorities
+            .keys()
+            .map(|name| Self {
+                author: name.clone(),
+                epoch: committee.epoch(),
+                ..Self::default()
+            })
+            .collect()
+    }
+
     pub async fn new(
         header: &Header,
         author: &PublicKey,
@@ -325,6 +345,18 @@ impl Vote {
         self.author
             .verify(vote_digest.as_ref(), &self.signature)
             .map_err(DagError::from)
+    }
+
+    pub fn round(&self) -> Round {
+        self.round
+    }
+
+    pub fn epoch(&self) -> Epoch {
+        self.epoch
+    }
+
+    pub fn origin(&self) -> PublicKey {
+        self.origin.clone()
     }
 }
 #[derive(Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Copy)]

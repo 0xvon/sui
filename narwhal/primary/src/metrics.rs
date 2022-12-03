@@ -59,6 +59,7 @@ pub struct PrimaryChannelMetrics {
     pub tx_our_digests: IntGauge,
     /// occupancy of the channel from the `primary::Core` to the `primary::Proposer`
     pub tx_parents: IntGauge,
+    pub tx_vote: IntGauge,
     /// occupancy of the channel from the `primary::Proposer` to the `primary::Core`
     pub tx_headers: IntGauge,
     /// occupancy of the channel from the `primary::Synchronizer` to the `primary::HeaderWaiter`
@@ -97,6 +98,7 @@ pub struct PrimaryChannelMetrics {
     pub tx_our_digests_total: IntCounter,
     /// total received on channel from the `primary::Core` to the `primary::Proposer`
     pub tx_parents_total: IntCounter,
+    pub tx_vote_total: IntCounter,
     /// total received on channel from the `primary::Proposer` to the `primary::Core`
     pub tx_headers_total: IntCounter,
     /// total received on channel from the `primary::Synchronizer` to the `primary::HeaderWaiter`
@@ -165,8 +167,13 @@ impl PrimaryChannelMetrics {
                 registry
             ).unwrap(),
             tx_parents: register_int_gauge_with_registry!(
-                "tx_parents",
+                "tx_vote",
                 "occupancy of the channel from the `primary::Core` to the `primary::Proposer`",
+                registry
+            ).unwrap(),
+            tx_vote: register_int_gauge_with_registry!(
+                "tx_parents",
+                "occupancy of the vote channel from the `primary::Core` to the `primary::Proposer`",
                 registry
             ).unwrap(),
             tx_headers: register_int_gauge_with_registry!(
@@ -259,6 +266,11 @@ impl PrimaryChannelMetrics {
             tx_parents_total: register_int_counter_with_registry!(
                 "tx_parents_total",
                 "total received on channel from the `primary::Core` to the `primary::Proposer`",
+                registry
+            ).unwrap(),
+            tx_vote_total: register_int_counter_with_registry!(
+                "tx_vote_total",
+                "total received on vote channel from the `primary::Core` to the `primary::Proposer`",
                 registry
             ).unwrap(),
             tx_headers_total: register_int_counter_with_registry!(
