@@ -16,7 +16,7 @@ use tracing::{debug, info};
 use types::{
     error::{DagError, DagResult},
     metered_channel::{Receiver, Sender},
-    BatchDigest, Certificate, Header, ReconfigureNotification, Round,
+    BatchDigest, Certificate, Vote, Header, ReconfigureNotification, Round,
 };
 
 #[cfg(test)]
@@ -47,6 +47,8 @@ pub struct Proposer {
     rx_reconfigure: watch::Receiver<ReconfigureNotification>,
     /// Receives the parents to include in the next header (along with their round number).
     rx_core: Receiver<(Vec<Certificate>, Round, Epoch)>,
+    /// receives the votes to include in the next header (along with their round number),
+    rx_core_vote: Receiver<(Vote, Round, Epoch)>,
     /// Receives the batches' digests from our workers.
     rx_workers: Receiver<(BatchDigest, WorkerId)>,
     /// Sends newly created headers to the `Core`.
@@ -56,8 +58,10 @@ pub struct Proposer {
     proposer_store: ProposerStore,
     /// The current round of the dag.
     round: Round,
-    /// Holds the certificates' ids waiting to be included in the next header.
+    /// Holds the certificates' ids waiting to be included in the current header.
     last_parents: Vec<Certificate>,
+    /// Holds the votes' ids waiting to be included in the next header.
+    prev_votes: Vec<Vote>,
     /// Holds the certificate of the last leader (if any).
     last_leader: Option<Certificate>,
     /// Holds the batches' digests waiting to be included in the next header.
@@ -80,6 +84,7 @@ impl Proposer {
         network_model: NetworkModel,
         rx_reconfigure: watch::Receiver<ReconfigureNotification>,
         rx_core: Receiver<(Vec<Certificate>, Round, Epoch)>,
+        rx_core_vote: Receiver<(Vote, Round, Epoch)>,
         rx_workers: Receiver<(BatchDigest, WorkerId)>,
         tx_core: Sender<Header>,
         metrics: Arc<PrimaryMetrics>,
@@ -96,11 +101,13 @@ impl Proposer {
                 network_model,
                 rx_reconfigure,
                 rx_core,
+                rx_core_vote,
                 rx_workers,
                 tx_core,
                 proposer_store,
                 round: 0,
                 last_parents: genesis,
+                prev_votes: Vec::new(),
                 last_leader: None,
                 digests: Vec::with_capacity(2 * max_header_num_of_batches),
                 metrics,
@@ -120,6 +127,7 @@ impl Proposer {
             self.committee.epoch(),
             self.digests.drain(..num_of_digests).collect(),
             self.last_parents.drain(..).map(|x| x.digest()).collect(),
+            self.prev_votes.drain(..).map(|x|x).collect(),
             &mut self.signature_service,
         )
         .await;
@@ -165,6 +173,7 @@ impl Proposer {
 
         self.round = 0;
         self.last_parents = Certificate::genesis(&self.committee);
+        self.prev_votes = Vec::new();
     }
 
     /// Compute the timeout value of the proposer.
@@ -301,6 +310,10 @@ impl Proposer {
             }
 
             tokio::select! {
+                Some((vote, round, epoch)) = self.rx_core_vote.recv() => {
+                    // MASATODO
+                }
+
                 Some((parents, round, epoch)) = self.rx_core.recv() => {
                     // If the core already moved to the next epoch we should pull the next
                     // committee as well.

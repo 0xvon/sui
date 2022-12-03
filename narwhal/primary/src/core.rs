@@ -66,6 +66,8 @@ pub struct Core {
     tx_consensus: Sender<Certificate>,
     /// Send valid a quorum of certificates' ids to the `Proposer` (along with their round).
     tx_proposer: Sender<(Vec<Certificate>, Round, Epoch)>,
+    /// Send valid a vote to the `Proposer` (along with their round).
+    tx_proposer_vote: Sender<(Vote, Round, Epoch)>,
 
     /// The last garbage collected round.
     gc_round: Round,
@@ -112,6 +114,7 @@ impl Core {
         rx_proposer: Receiver<Header>,
         tx_consensus: Sender<Certificate>,
         tx_proposer: Sender<(Vec<Certificate>, Round, Epoch)>,
+        tx_proposer_vote: Sender<(Vote, Round, Epoch)>,
         metrics: Arc<PrimaryMetrics>,
         primary_network: P2pNetwork,
     ) -> JoinHandle<()> {
@@ -133,6 +136,7 @@ impl Core {
                 rx_proposer,
                 tx_consensus,
                 tx_proposer,
+                tx_proposer_vote,
                 gc_round: 0,
                 highest_received_round: 0,
                 highest_processed_round: 0,
@@ -201,8 +205,6 @@ impl Core {
 
         // Process the header.
         self.process_header(&header).await
-
-        // MASATODO: send previous round's votes here
     }
 
     // MASATODO: process header
@@ -306,6 +308,13 @@ impl Core {
         // Also when the header round is less than the latest round we have already voted for,
         // then it is useless to vote, so we don't.
 
+        // MASATODO: vote digest -> vote???
+        // if header_source == "other" {
+        //     for vote in header.prev_votes {
+        //         self.process_vote(vote).await;
+        //     }
+        // }
+
         let result = self
             .vote_digest_store
             .read(header.author.clone())
@@ -335,8 +344,6 @@ impl Core {
             }
         }
 
-        // MASATODO: do not send vote
-        // MASATODO: create and process vote and certificate here
         self.send_vote(header).await
     }
 
@@ -350,23 +357,8 @@ impl Core {
         );
         let vote_digest = vote.digest();
 
-        if vote.origin == self.name {
-            if let Err(e) = self.process_vote(vote).await {
-                error!("Failed to process our own vote: {}", e.to_string());
-            }
-        } else {
-            // MASATODO: do not send vote to other nodes
-            let handler = self
-                .network
-                .send(
-                    self.committee.network_key(&header.author).unwrap(),
-                    &PrimaryMessage::Vote(vote),
-                )
-                .await;
-            self.cancel_handlers
-                .entry(header.round)
-                .or_insert_with(Vec::new)
-                .push(handler);
+        if let Err(e) = self.process_vote(vote).await {
+            error!("Failed to process our own vote: {}", e.to_string());
         }
 
         // Update the vote digest store with the vote we just sent.
@@ -382,6 +374,12 @@ impl Core {
                 },
             )
             .await;
+
+        // MASATODO
+        // self.tx_proposer
+        //     .send((vec![], header.round, vote.epoch()))
+        //     .await
+        //     .map_err(|_| DagError::ShuttingDown)?;
 
         Ok(())
     }
