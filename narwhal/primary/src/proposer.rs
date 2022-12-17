@@ -48,7 +48,7 @@ pub struct Proposer {
     /// Receives the parents to include in the next header (along with their round number).
     rx_core: Receiver<(Vec<Certificate>, Round, Epoch)>,
     /// receives the votes to include in the next header (along with their round number),
-    rx_core_vote: Receiver<(Vote, Round, Epoch)>,
+    rx_core_vote: Receiver<(Vec<Vote>, Round, Epoch)>,
     /// Receives the batches' digests from our workers.
     rx_workers: Receiver<(BatchDigest, WorkerId)>,
     /// Sends newly created headers to the `Core`.
@@ -62,8 +62,8 @@ pub struct Proposer {
     last_parents: Vec<Certificate>,
     /// Holds the votes' ids waiting to be included in the next header.
     prev_votes: Vec<Vote>,
-    /// Holds the certificate of the last leader (if any).
-    last_leader: Option<Certificate>,
+    /// Holds the vote of the last leader (if any).
+    last_leader: Option<Vote>,
     /// Holds the batches' digests waiting to be included in the next header.
     digests: Vec<(BatchDigest, WorkerId)>,
     /// Metrics handler
@@ -84,7 +84,7 @@ impl Proposer {
         network_model: NetworkModel,
         rx_reconfigure: watch::Receiver<ReconfigureNotification>,
         rx_core: Receiver<(Vec<Certificate>, Round, Epoch)>,
-        rx_core_vote: Receiver<(Vote, Round, Epoch)>,
+        rx_core_vote: Receiver<(Vec<Vote>, Round, Epoch)>,
         rx_workers: Receiver<(BatchDigest, WorkerId)>,
         tx_core: Sender<Header>,
         metrics: Arc<PrimaryMetrics>,
@@ -126,12 +126,12 @@ impl Proposer {
             self.round,
             self.committee.epoch(),
             self.digests.drain(..num_of_digests).collect(),
-            self.last_parents.drain(..).map(|x| x.digest()).collect(),
+            vec![].drain(..).map(|x| x).collect(),
             self.prev_votes.drain(..).map(|x|x).collect(),
             &mut self.signature_service,
         )
         .await;
-        debug!("Created {header:?}");
+        debug!("MASADEBUG: Created Header {} for votes {}", header, self.prev_votes.len());
 
         // Equivocation protection using the proposer store
         if let Some(last_header) = self.proposer_store.get_last_proposed()? {
@@ -197,9 +197,9 @@ impl Proposer {
     fn update_leader(&mut self) -> bool {
         let leader_name = self.committee.leader(self.round);
         self.last_leader = self
-            .last_parents
+            .prev_votes
             .iter()
-            .find(|x| x.origin() == leader_name)
+            .find(|x| x.author == leader_name)
             .cloned();
 
         if let Some(leader) = self.last_leader.as_ref() {
@@ -212,34 +212,42 @@ impl Proposer {
     /// Check whether if we have (i) f+1 votes for the leader, (ii) 2f+1 nodes not voting for the leader,
     /// or (iii) there is no leader to vote for. This is only relevant in partial synchrony.
     fn enough_votes(&self) -> bool {
-        let leader = match &self.last_leader {
-            Some(x) => x.digest(),
-            None => return true,
-        };
+        debug!(
+            "MASADEBUG: enough_votes called {:?}/{:?}",
+            self.prev_votes.len(),
+            self.committee.quorum_threshold()
+        );
+        // return self.prev_votes.len() >= self.committee.quorum_threshold() as usize;
+        return self.prev_votes.len() > 0;
+        // let leader = match &self.last_leader {
+        //     Some(x) => x.digest(),
+        //     None => return true,
+        // };
 
-        let mut votes_for_leader = 0;
-        let mut no_votes = 0;
-        for certificate in &self.last_parents {
-            let stake = self.committee.stake(&certificate.origin());
-            if certificate.header.parents.contains(&leader) {
-                votes_for_leader += stake;
-            } else {
-                no_votes += stake;
-            }
-        }
+        // let mut votes_for_leader = 0;
+        // let mut no_votes = 0;
+        // MASATODO
+        // for certificate in &self.last_parents {
+        //     let stake = self.committee.stake(&certificate.origin());
+        //     if certificate.header.parents.contains(&leader) {
+        //         votes_for_leader += stake;
+        //     } else {
+        //         no_votes += stake;
+        //     }
+        // }
 
-        let mut enough_votes = votes_for_leader >= self.committee.validity_threshold();
-        if enough_votes {
-            if let Some(leader) = self.last_leader.as_ref() {
-                debug!(
-                    "Got enough support for leader {} at round {}",
-                    leader.origin(),
-                    self.round
-                );
-            }
-        }
-        enough_votes |= no_votes >= self.committee.quorum_threshold();
-        enough_votes
+        // let mut enough_votes = votes_for_leader >= self.committee.validity_threshold();
+        // if enough_votes {
+        //     if let Some(leader) = self.last_leader.as_ref() {
+        //         debug!(
+        //             "Got enough support for leader {} at round {}",
+        //             leader.origin(),
+        //             self.round
+        //         );
+        //     }
+        // }
+        // enough_votes |= no_votes >= self.committee.quorum_threshold();
+        // enough_votes
     }
 
     /// Whether we can advance the DAG or need to wait for the leader/more votes. This is only relevant in
@@ -250,10 +258,11 @@ impl Proposer {
             NetworkModel::Asynchronous => true,
 
             // In partial synchrony, we need to wait for the leader or for enough votes.
-            NetworkModel::PartiallySynchronous => match self.round % 2 {
-                0 => self.update_leader(),
-                _ => self.enough_votes(),
-            },
+            // NetworkModel::PartiallySynchronous => match self.round % 2 {
+            //     0 => self.update_leader(),
+            //     _ => self.enough_votes(),
+            // },
+            NetworkModel::PartiallySynchronous => self.enough_votes(),
         }
     }
 
@@ -273,19 +282,19 @@ impl Proposer {
             // (ii) we have enough digests (header_num_of_batches_threshold) and we are on the happy path (we can vote for
             // the leader or the leader has enough votes to enable a commit). The latter condition only matters
             // in partially synchrony. We guarantee that no more than max_header_num_of_batches are included in
-            let enough_parents = !self.last_parents.is_empty();
+            // let enough_parents = !self.last_parents.is_empty();
+            let enough_prev_votes = self.round == 0 || !self.prev_votes.is_empty();
             let enough_digests = self.digests.len() >= self.header_num_of_batches_threshold;
             let mut timer_expired = timer.is_elapsed();
 
-            // MASATODO: change round change condition
-            if (timer_expired || (enough_digests && advance)) && enough_parents {
+            if (timer_expired || (enough_digests && advance)) && enough_prev_votes {
                 if timer_expired && matches!(self.network_model, NetworkModel::PartiallySynchronous)
                 {
                     // It is expected that this timer expires from time to time. If it expires too often, it
                     // either means some validators are Byzantine or that the network is experiencing periods
                     // of asynchrony. In practice, the latter scenario means we misconfigured the parameter
                     // called `max_header_delay`.
-                    debug!("Timer expired for round {}", self.round);
+                    debug!("MASADEBUG: Timer expired for round {}", self.round);
                 }
 
                 // Advance to the next round.
@@ -294,13 +303,13 @@ impl Proposer {
                     .current_round
                     .with_label_values(&[&self.committee.epoch.to_string()])
                     .set(self.round as i64);
-                debug!("Dag moved to round {}", self.round);
+                debug!("MASADEBUG: Dag moved to round {}", self.round);
 
                 // Make a new header.
                 match self.make_header().await {
                     Err(e @ DagError::ShuttingDown) => debug!("{e}"),
                     Err(e) => panic!("Unexpected error: {e}"),
-                    Ok(()) => (),
+                    Ok(()) => {},
                 }
 
                 // Reschedule the timer.
@@ -310,11 +319,9 @@ impl Proposer {
             }
 
             tokio::select! {
-                Some((vote, round, epoch)) = self.rx_core_vote.recv() => {
-                    // MASATODO
-                }
+                Some((prev_votes, round, epoch)) = self.rx_core_vote.recv() => {
+                    debug!("MASADEBUG {:?}.52: rx_core_vote received {:?} votes", round, prev_votes.len());
 
-                Some((parents, round, epoch)) = self.rx_core.recv() => {
                     // If the core already moved to the next epoch we should pull the next
                     // committee as well.
                     match epoch.cmp(&self.committee.epoch()) {
@@ -341,14 +348,14 @@ impl Proposer {
                         }
                     }
 
-                    // Compare the parents' round number with our current round.
                     match round.cmp(&self.round) {
                         Ordering::Greater => {
                             // We accept round bigger than our current round to jump ahead in case we were
                             // late (or just joined the network).
+                            debug!("MASADEBUG: greater");
                             self.round = round;
-                            self.last_parents = parents;
-
+                            self.prev_votes = prev_votes;
+                            continue;
                         },
                         Ordering::Less => {
                             // Ignore parents from older rounds.
@@ -357,7 +364,8 @@ impl Proposer {
                         Ordering::Equal => {
                             // The core gives us the parents the first time they are enough to form a quorum.
                             // Then it keeps giving us all the extra parents.
-                            self.last_parents.extend(parents)
+                            debug!("MASADEBUG: equal");
+                            self.prev_votes = prev_votes;
                         }
                     }
 
@@ -365,6 +373,59 @@ impl Proposer {
                     // we ignore this check and advance anyway.
                     advance = self.ready();
                 }
+
+                // Some((parents, round, epoch)) = self.rx_core.recv() => {
+                //     debug!("MASADEBUG: rx_core received at round {}", round);
+                //     // If the core already moved to the next epoch we should pull the next
+                //     // committee as well.
+                //     match epoch.cmp(&self.committee.epoch()) {
+                //         Ordering::Greater => {
+                //             let message = self.rx_reconfigure.borrow_and_update().clone();
+                //             match message  {
+                //                 ReconfigureNotification::NewEpoch(new_committee) => {
+                //                     self.change_epoch(new_committee);
+                //                 },
+                //                 ReconfigureNotification::UpdateCommittee(new_committee) => {
+                //                     self.committee = new_committee;
+                //                 },
+                //                 ReconfigureNotification::Shutdown => return,
+                //             }
+                //             tracing::debug!("Committee updated to {}", self.committee);
+                //         }
+                //         Ordering::Less => {
+                //             // We already updated committee but the core is slow. Ignore the parents
+                //             // from older epochs.
+                //             continue
+                //         },
+                //         Ordering::Equal => {
+                //             // Nothing to do, we can proceed.
+                //         }
+                //     }
+
+                //     // Compare the parents' round number with our current round.
+                //     match round.cmp(&self.round) {
+                //         Ordering::Greater => {
+                //             // We accept round bigger than our current round to jump ahead in case we were
+                //             // late (or just joined the network).
+                //             self.round = round;
+                //             self.last_parents = parents;
+
+                //         },
+                //         Ordering::Less => {
+                //             // Ignore parents from older rounds.
+                //             continue;
+                //         },
+                //         Ordering::Equal => {
+                //             // The core gives us the parents the first time they are enough to form a quorum.
+                //             // Then it keeps giving us all the extra parents.
+                //             self.last_parents.extend(parents)
+                //         }
+                //     }
+
+                //     // Check whether we can advance to the next round. Note that if we timeout,
+                //     // we ignore this check and advance anyway.
+                //     advance = self.ready();
+                // }
 
                 // Receive digests from our workers.
                 Some((digest, worker_id)) = self.rx_workers.recv() => {

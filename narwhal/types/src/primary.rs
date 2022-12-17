@@ -151,6 +151,19 @@ impl Header {
         }
     }
 
+    pub fn insert_parents(&self, parents: Vec<Certificate>) -> Self {
+        Self {
+            author: self.author.clone(),
+            round: self.round.clone(),
+            epoch: self.epoch.clone(),
+            payload: self.payload.clone(),
+            parents: parents.clone().drain(..).map(|x| x.digest()).collect(),
+            prev_votes: self.prev_votes.clone(),
+            id: self.id.clone(),
+            signature: self.signature.clone(),
+        }
+    }
+
     pub fn verify(&self, committee: &Committee, worker_cache: SharedWorkerCache) -> DagResult<()> {
         // Ensure the header is from the correct epoch.
         ensure!(

@@ -6,11 +6,63 @@ use config::{Committee, Stake};
 use crypto::{PublicKey, Signature};
 use fastcrypto::traits::EncodeDecodeBase64;
 use std::collections::HashSet;
+use tracing::{debug, error, info, instrument, warn};
 use types::{
     ensure,
     error::{DagError, DagResult},
-    Certificate, Header, Vote,
+    Certificate, Header, Vote, Round,
 };
+
+/// Aggregate votes for current round's headers
+pub struct VotesStore {
+    weight: Stake,
+    votes: Vec<Vote>,
+    round: Round,
+}
+
+impl VotesStore {
+    pub fn new() -> Self {
+        Self {
+            weight: 0,
+            votes: Vec::new(),
+            round: 0,
+        }
+    }
+
+    pub fn next(&mut self) {
+        self.round += 1;
+        self.votes.clear();
+        self.weight = 0;
+    }
+
+    pub fn append(
+        &mut self,
+        committee: &Committee,
+        vote: &Vote
+    ) -> DagResult<Option<Vec<Vote>>> {
+        let author = vote.author.clone();
+        if self.round != vote.round {
+            self.round = vote.round;
+            self.votes.clear();
+        }
+        // ensure!(
+        //     self.round == vote.round,
+        //     DagError::InvalidHeaderId
+        // );
+
+        self.votes.push(vote.clone());
+        self.weight += committee.stake(&author);
+        debug!("MASADEBUG {:?}.3.5: weight count: {:?}/{:?} for header {:?}", vote.round, self.weight, committee.quorum_threshold(), vote.id);
+
+        if self.weight >= committee.quorum_threshold() {
+            self.weight = 0; // Ensures quorum is only reached once.
+            return Ok(Some(self.votes.clone()));
+        }
+        Ok(None)
+    }
+
+
+}
 
 /// Aggregates votes for a particular header into a certificate.
 pub struct VotesAggregator {
@@ -36,6 +88,7 @@ impl VotesAggregator {
     ) -> DagResult<Option<Certificate>> {
         let author = vote.author;
 
+        // MASATODO
         // Ensure it is the first time this authority votes.
         ensure!(
             self.used.insert(author.clone()),
@@ -44,6 +97,7 @@ impl VotesAggregator {
 
         self.votes.push((author.clone(), vote.signature));
         self.weight += committee.stake(&author);
+        debug!("MASADEBUG {:?}.3.5: weight count: {:?}/{:?} for header {:?}", vote.round, self.weight, committee.quorum_threshold(), header.id);
 
         if self.weight >= committee.quorum_threshold() {
             self.weight = 0; // Ensures quorum is only reached once.

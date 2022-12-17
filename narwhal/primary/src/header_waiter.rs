@@ -151,6 +151,7 @@ impl HeaderWaiter {
         T: Serialize + DeserializeOwned + Send + Clone,
         V: Serialize + DeserializeOwned + Send,
     {
+        debug!("MASADEBUG: waiter...");
         let waiting: Vec<_> = missing.into_iter().map(|x| store.notify_read(x)).collect();
         tokio::select! {
             result = try_join_all(waiting) => {
@@ -166,6 +167,7 @@ impl HeaderWaiter {
         deliver: Header,
         handler: oneshot::Receiver<()>,
     ) -> DagResult<Option<Header>> {
+        debug!("MASADEBUG: wait for parents...");
         let waiting: Vec<_> = missing.into_iter().map(|x| store.notify_read(x)).collect();
         tokio::select! {
             result = try_join_all(waiting) => {
