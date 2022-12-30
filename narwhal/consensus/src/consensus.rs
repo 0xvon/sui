@@ -265,6 +265,7 @@ where
         loop {
             tokio::select! {
                 Some(certificate) = self.rx_primary.recv() => {
+                    tracing::debug!("MASADEBUG: Consensus received certificate {:?}", certificate);
                     // If the core already moved to the next epoch we should pull the next
                     // committee as well.
                     match certificate.epoch().cmp(&self.committee.epoch()) {

@@ -5,7 +5,7 @@ use crate::{metrics::PrimaryMetrics, NetworkModel};
 use config::{Committee, Epoch, WorkerId};
 use crypto::{PublicKey, Signature};
 use fastcrypto::{Hash as _, SignatureService};
-use std::{cmp::Ordering, sync::Arc};
+use std::{cmp::Ordering, sync::Arc, collections::HashMap};
 use storage::ProposerStore;
 use tokio::{
     sync::watch,
@@ -48,7 +48,7 @@ pub struct Proposer {
     /// Receives the parents to include in the next header (along with their round number).
     rx_core: Receiver<(Vec<Certificate>, Round, Epoch)>,
     /// receives the votes to include in the next header (along with their round number),
-    rx_core_vote: Receiver<(Vec<Vote>, Round, Epoch)>,
+    rx_core_vote: Receiver<(Vote, Round, Epoch)>,
     /// Receives the batches' digests from our workers.
     rx_workers: Receiver<(BatchDigest, WorkerId)>,
     /// Sends newly created headers to the `Core`.
@@ -61,7 +61,7 @@ pub struct Proposer {
     /// Holds the certificates' ids waiting to be included in the current header.
     last_parents: Vec<Certificate>,
     /// Holds the votes' ids waiting to be included in the next header.
-    prev_votes: Vec<Vote>,
+    prev_votes: HashMap<Round, Vec<Vote>>,
     /// Holds the vote of the last leader (if any).
     last_leader: Option<Vote>,
     /// Holds the batches' digests waiting to be included in the next header.
@@ -84,7 +84,7 @@ impl Proposer {
         network_model: NetworkModel,
         rx_reconfigure: watch::Receiver<ReconfigureNotification>,
         rx_core: Receiver<(Vec<Certificate>, Round, Epoch)>,
-        rx_core_vote: Receiver<(Vec<Vote>, Round, Epoch)>,
+        rx_core_vote: Receiver<(Vote, Round, Epoch)>,
         rx_workers: Receiver<(BatchDigest, WorkerId)>,
         tx_core: Sender<Header>,
         metrics: Arc<PrimaryMetrics>,
@@ -107,7 +107,7 @@ impl Proposer {
                 proposer_store,
                 round: 0,
                 last_parents: genesis,
-                prev_votes: Vec::new(),
+                prev_votes: HashMap::with_capacity(2000),
                 last_leader: None,
                 digests: Vec::with_capacity(2 * max_header_num_of_batches),
                 metrics,
@@ -127,11 +127,12 @@ impl Proposer {
             self.committee.epoch(),
             self.digests.drain(..num_of_digests).collect(),
             vec![].drain(..).map(|x| x).collect(),
-            self.prev_votes.drain(..).map(|x|x).collect(),
+            self.prev_votes.entry(self.round).or_default().drain(..).collect(),
             &mut self.signature_service,
         )
         .await;
-        debug!("MASADEBUG: Created Header {} for votes {}", header, self.prev_votes.len());
+        debug!("Created {header:?}");
+        debug!("for votes {}", self.prev_votes.len());
 
         // Equivocation protection using the proposer store
         if let Some(last_header) = self.proposer_store.get_last_proposed()? {
@@ -173,7 +174,7 @@ impl Proposer {
 
         self.round = 0;
         self.last_parents = Certificate::genesis(&self.committee);
-        self.prev_votes = Vec::new();
+        self.prev_votes.clear();
     }
 
     /// Compute the timeout value of the proposer.
@@ -194,31 +195,35 @@ impl Proposer {
     }
 
     /// Update the last leader certificate. This is only relevant in partial synchrony.
-    fn update_leader(&mut self) -> bool {
-        let leader_name = self.committee.leader(self.round);
-        self.last_leader = self
-            .prev_votes
-            .iter()
-            .find(|x| x.author == leader_name)
-            .cloned();
+    // fn update_leader(&mut self) -> bool {
+        // let leader_name = self.committee.leader(self.round);
+        // self.last_leader = self
+        //     .prev_votes
+        //     .iter()
+        //     .find(|x| x.author == leader_name)
+        //     .cloned();
 
-        if let Some(leader) = self.last_leader.as_ref() {
-            debug!("Got leader {} for round {}", leader.origin(), self.round);
-        }
+        // if let Some(leader) = self.last_leader.as_ref() {
+        //     debug!("Got leader {} for round {}", leader.origin(), self.round);
+        // }
 
-        self.last_leader.is_some()
-    }
+        // self.last_leader.is_some()
+    // }
 
     /// Check whether if we have (i) f+1 votes for the leader, (ii) 2f+1 nodes not voting for the leader,
     /// or (iii) there is no leader to vote for. This is only relevant in partial synchrony.
-    fn enough_votes(&self) -> bool {
+    fn enough_votes(&mut self) -> bool {
         debug!(
             "MASADEBUG: enough_votes called {:?}/{:?}",
             self.prev_votes.len(),
             self.committee.quorum_threshold()
         );
         // return self.prev_votes.len() >= self.committee.quorum_threshold() as usize;
-        return self.prev_votes.len() > 0;
+        let vote_len = self.prev_votes
+            .entry(self.round)
+            .or_insert_with(Vec::new)
+            .len();
+        return vote_len > 0;
         // let leader = match &self.last_leader {
         //     Some(x) => x.digest(),
         //     None => return true,
@@ -283,11 +288,12 @@ impl Proposer {
             // the leader or the leader has enough votes to enable a commit). The latter condition only matters
             // in partially synchrony. We guarantee that no more than max_header_num_of_batches are included in
             // let enough_parents = !self.last_parents.is_empty();
-            let enough_prev_votes = self.round == 0 || !self.prev_votes.is_empty();
+            // let enough_prev_votes = self.round == 0 || !self.prev_votes.is_empty();
             let enough_digests = self.digests.len() >= self.header_num_of_batches_threshold;
             let mut timer_expired = timer.is_elapsed();
 
-            if (timer_expired || (enough_digests && advance)) && enough_prev_votes {
+            // if timer_expired {
+            if (timer_expired || (enough_digests && advance)) {
                 if timer_expired && matches!(self.network_model, NetworkModel::PartiallySynchronous)
                 {
                     // It is expected that this timer expires from time to time. If it expires too often, it
@@ -319,8 +325,9 @@ impl Proposer {
             }
 
             tokio::select! {
-                Some((prev_votes, round, epoch)) = self.rx_core_vote.recv() => {
-                    debug!("MASADEBUG {:?}.52: rx_core_vote received {:?} votes", round, prev_votes.len());
+                Some((prev_vote, round, epoch)) = self.rx_core_vote.recv() => {
+                    debug!("MASADEBUG {:?}.52: rx_core_vote received", round);
+                    debug!("MASADEBUG: self round: {}, round: {}", self.round, round);
 
                     // If the core already moved to the next epoch we should pull the next
                     // committee as well.
@@ -352,10 +359,20 @@ impl Proposer {
                         Ordering::Greater => {
                             // We accept round bigger than our current round to jump ahead in case we were
                             // late (or just joined the network).
-                            debug!("MASADEBUG: greater");
-                            self.round = round;
-                            self.prev_votes = prev_votes;
-                            continue;
+                            debug!("MASADEBUG: greater, count {}", self.prev_votes.len());
+                            // self.round = round;
+                            // self.prev_votes = prev_votes;
+                            if self.prev_votes
+                                .entry(round)
+                                .or_insert_with(Vec::new)
+                                .contains(&prev_vote) {
+                                    debug!("MASADEBUG: found");
+                                }
+
+                            self.prev_votes
+                                .entry(round)
+                                .or_insert_with(Vec::new)
+                                .push(prev_vote);
                         },
                         Ordering::Less => {
                             // Ignore parents from older rounds.
@@ -365,7 +382,20 @@ impl Proposer {
                             // The core gives us the parents the first time they are enough to form a quorum.
                             // Then it keeps giving us all the extra parents.
                             debug!("MASADEBUG: equal");
-                            self.prev_votes = prev_votes;
+
+                            if self.prev_votes
+                                .entry(round)
+                                .or_insert_with(Vec::new)
+                                .contains(&prev_vote) {
+                                    debug!("MASADEBUG: found");
+                                } else {
+                                    debug!("MASADEBUG: not found");
+                                }
+
+                            self.prev_votes
+                                .entry(round)
+                                .or_insert_with(Vec::new)
+                                .push(prev_vote);   
                         }
                     }
 

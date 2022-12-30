@@ -76,10 +76,13 @@ impl ConsensusProtocol for Bullshark {
         // If it is the case, we can commit the leader. But first, we need to recursively go back to
         // the last committed leader, and commit all preceding leaders in the right order. Committing
         // a leader block means committing all its dependencies.
-        if stake < self.committee.validity_threshold() {
-            debug!("Leader {:?} does not have enough support", leader);
-            return Ok(Vec::new());
-        }
+        // MASATODO
+        // if stake < self.committee.validity_threshold() {
+        //     debug!("Leader {:?} does not have enough support", leader);
+        //     return Ok(Vec::new());
+        // }
+
+        debug!("AAAAA");
 
         // Get an ordered list of past leaders that are linked to the current leader.
         debug!("Leader {:?} has enough support", leader);
@@ -90,6 +93,7 @@ impl ConsensusProtocol for Bullshark {
             .iter()
             .rev()
         {
+            debug!("MASADEBUG: I'm leader!!!");
             // Starting from the oldest leader, flatten the sub-dag referenced by the leader.
             for x in utils::order_dag(self.gc_depth, leader, state) {
                 let digest = x.digest();

@@ -29,22 +29,21 @@ impl VotesStore {
         }
     }
 
-    pub fn next(&mut self) {
-        self.round += 1;
-        self.votes.clear();
-        self.weight = 0;
+    pub fn try_next(&mut self, round: Round) {
+        if self.round < round {
+            info!("MASADEBUG: change round of votes_store to round {round}");
+            self.round = round;
+            self.votes.clear();
+            self.weight = 0;
+        }
     }
 
     pub fn append(
         &mut self,
         committee: &Committee,
         vote: &Vote
-    ) -> DagResult<Option<Vec<Vote>>> {
+    ) -> Vec<Vote> {
         let author = vote.author.clone();
-        if self.round != vote.round {
-            self.round = vote.round;
-            self.votes.clear();
-        }
         // ensure!(
         //     self.round == vote.round,
         //     DagError::InvalidHeaderId
@@ -54,11 +53,13 @@ impl VotesStore {
         self.weight += committee.stake(&author);
         debug!("MASADEBUG {:?}.3.5: weight count: {:?}/{:?} for header {:?}", vote.round, self.weight, committee.quorum_threshold(), vote.id);
 
-        if self.weight >= committee.quorum_threshold() {
-            self.weight = 0; // Ensures quorum is only reached once.
-            return Ok(Some(self.votes.clone()));
-        }
-        Ok(None)
+        // quorum貯まらないとsome返さないのだと一生タイマーが進まない恐れがある
+        // if self.weight >= committee.quorum_threshold() {
+        //     self.weight = 0; // Ensures quorum is only reached once.
+        //     return Ok(Some(self.votes.clone()));
+        // }
+        // Ok(None)
+        return self.votes.clone();
     }
 
 

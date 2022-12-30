@@ -68,10 +68,12 @@ pub struct Core {
     /// Send valid a quorum of certificates' ids to the `Proposer` (along with their round).
     tx_proposer: Sender<(Vec<Certificate>, Round, Epoch)>,
     /// Send valid a vote to the `Proposer` (along with their round).
-    tx_proposer_vote: Sender<(Vec<Vote>, Round, Epoch)>,
+    tx_proposer_vote: Sender<(Vote, Round, Epoch)>,
 
     /// The last garbage collected round.
     gc_round: Round,
+    /// Current round.
+    current_round: Round,
     /// The highest certificates round received by this node.
     highest_received_round: Round,
     /// The highest certificates round processed by this node.
@@ -117,7 +119,7 @@ impl Core {
         rx_proposer: Receiver<Header>,
         tx_consensus: Sender<Certificate>,
         tx_proposer: Sender<(Vec<Certificate>, Round, Epoch)>,
-        tx_proposer_vote: Sender<(Vec<Vote>, Round, Epoch)>,
+        tx_proposer_vote: Sender<(Vote, Round, Epoch)>,
         metrics: Arc<PrimaryMetrics>,
         primary_network: P2pNetwork,
     ) -> JoinHandle<()> {
@@ -141,6 +143,7 @@ impl Core {
                 tx_proposer,
                 tx_proposer_vote,
                 gc_round: 0,
+                current_round: 0,
                 highest_received_round: 0,
                 highest_processed_round: 0,
                 processing: HashMap::with_capacity(2 * gc_depth as usize),
@@ -224,10 +227,10 @@ impl Core {
         };
 
         // MASATODO: try to update round here
-        // if header.round > self.highest_received_round {
-        //     debug!("MASADEBUG: go next round");
-        //     self.go_next_round();
-        // }
+        if header.round > self.current_round {
+            debug!("MASADEBUG: go next round");
+            self.go_next_round();
+        }
 
         // Insert current header
         self.current_headers
@@ -421,13 +424,11 @@ impl Core {
             )
             .await;
 
-        if let Some(prev_votes) = self.votes_store.append(&self.committee, &vote)? {
-            debug!("MASADEBUG {:?}.4: Collected prev_votes", header.round);
-            self.tx_proposer_vote
-                .send((prev_votes, header.round, header.epoch))
-                .await
-                .map_err(|_| DagError::ShuttingDown)?;
-        }
+        let prev_votes = self.votes_store.append(&self.committee, &vote);
+        self.tx_proposer_vote
+            .send((vote, self.current_round, header.epoch))
+            .await
+            .map_err(|_| DagError::ShuttingDown)?;
 
         Ok(())
     }
@@ -619,8 +620,6 @@ impl Core {
                 "Pruned {} messages from obsolete rounds.",
                 before.saturating_sub(self.cancel_handlers.len())
             );
-
-            self.go_next_round();
         }
 
         Ok(())
@@ -651,8 +650,9 @@ impl Core {
     }
 
     fn go_next_round(&mut self) {
+        self.current_round += 1;
         self.current_headers.clear();
-        self.votes_store.next();
+        self.votes_store.try_next(self.current_round);
         self.votes_aggregators.clear();
         self.certificates_aggregators.clear();
     }
@@ -821,7 +821,8 @@ impl Core {
                         let gc_round = round - self.gc_depth;
                         self.processing.retain(|k, _| k > &gc_round);
                         self.current_headers.clear();
-                        self.votes_store.next();
+                        self.current_round = round;
+                        self.votes_store.try_next(round);
                         self.votes_aggregators.clear();
                         self.certificates_aggregators.retain(|k, _| k > &gc_round);
                         self.cancel_handlers.retain(|k, _| k > &gc_round);
