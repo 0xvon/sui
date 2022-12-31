@@ -4,7 +4,7 @@
 use crate::{metrics::PrimaryMetrics, NetworkModel};
 use config::{Committee, Epoch, WorkerId};
 use crypto::{PublicKey, Signature};
-use fastcrypto::{Hash as _, SignatureService};
+use fastcrypto::SignatureService;
 use std::{cmp::Ordering, sync::Arc, collections::HashMap};
 use storage::ProposerStore;
 use tokio::{
@@ -16,7 +16,7 @@ use tracing::{debug, info};
 use types::{
     error::{DagError, DagResult},
     metered_channel::{Receiver, Sender},
-    BatchDigest, Certificate, Vote, Header, ReconfigureNotification, Round,
+    BatchDigest, Vote, Header, ReconfigureNotification, Round,
 };
 
 #[cfg(test)]
@@ -214,7 +214,7 @@ impl Proposer {
             vote_len,
             self.committee.quorum_threshold()
         );
-        return vote_len > 0;
+        return vote_len > self.committee.quorum_threshold() as usize;
         // let leader = match &self.last_leader {
         //     Some(x) => x.digest(),
         //     None => return true,

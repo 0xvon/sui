@@ -241,34 +241,6 @@ impl Core {
             return Ok(());
         }
 
-        // Ensure we have the parents. If at least one parent is missing, the synchronizer returns an empty
-        // vector; it will gather the missing parents (as well as all ancestors) from other nodes and then
-        // reschedule processing of this header.
-        // let parents: Vec<Certificate> = self.synchronizer.get_parents(header).await?;
-        // if parents.is_empty() {
-        //     self.metrics
-        //         .headers_suspended
-        //         .with_label_values(&[&header.epoch.to_string(), "missing_parents"])
-        //         .inc();
-        //     debug!("Processing of {} suspended: missing parent(s)", header.id);
-        //     return Ok(());
-        // }
-
-        // Check the parent certificates. Ensure the parents form a quorum and are all from the previous round.
-        // let mut stake = 0;
-        // for x in parents {
-        //     ensure!(
-        //         x.round() + 1 == header.round,
-        //         DagError::MalformedHeader(header.id)
-        //     );
-        //     stake += self.committee.stake(&x.origin());
-        // }
-        // ensure!(
-        //     stake >= self.committee.quorum_threshold(),
-        //     DagError::HeaderRequiresQuorum(header.id)
-        // );
-
-        // MASATODO
         // Check the parent votes. Ensure the parents form a quorum and are all from the previous round.
         // let mut stake = 0;
         // for x in &header.prev_votes {
@@ -419,7 +391,8 @@ impl Core {
             {
                 debug!(
                     "MASADEBUG {:?}.6: Assembled certificate {:?} for header {}",
-                    certificate.header.round, certificate, vote.id
+                    certificate.round() + 1,
+                    certificate, vote.id,
                 );
 
                 self.metrics
@@ -514,6 +487,7 @@ impl Core {
             .or_insert_with(|| Box::new(CertificatesAggregator::new()))
             .append(certificate.clone(), &self.committee)
         {
+            debug!("Parents created: {:?}", parents.len());
             // Store header with parents
             let processing_headers = self.processing
                 .entry(certificate.round() + 1)
@@ -527,21 +501,15 @@ impl Core {
                 }
             }
 
-            if parents.len() >= self.committee.quorum_threshold() as usize {
-                debug!(
-                    "MASADEBUG {:?}.8: Parents created!!!",
-                    certificate.header.round
-                );
-                let before = self.cancel_handlers.len();
-                if certificate.round() > 0 {
-                    self.cancel_handlers
-                        .retain(|k, _| *k >= certificate.round() - 1);
-                }
-                debug!(
-                    "Pruned {} messages from obsolete rounds.",
-                    before.saturating_sub(self.cancel_handlers.len())
-                );
+            let before = self.cancel_handlers.len();
+            if certificate.round() > 0 {
+                self.cancel_handlers
+                    .retain(|k, _| *k >= certificate.round() - 1);
             }
+            debug!(
+                "Pruned {} messages from obsolete rounds.",
+                before.saturating_sub(self.cancel_handlers.len())
+            );
         }
 
         Ok(())

@@ -10,7 +10,7 @@ use tracing::debug;
 use types::{
     ensure,
     error::{DagError, DagResult},
-    Certificate, Header, Vote,
+    Certificate, Header, Vote, HeaderDigest,
 };
 
 /// Aggregates votes for a particular header into a certificate.
@@ -37,7 +37,6 @@ impl VotesAggregator {
     ) -> DagResult<Option<Certificate>> {
         let author = vote.author;
 
-        // MASATODO
         // Ensure it is the first time this authority votes.
         ensure!(
             self.used.insert(author.clone()),
@@ -46,7 +45,7 @@ impl VotesAggregator {
 
         self.votes.push((author.clone(), vote.signature));
         self.weight += committee.stake(&author);
-        debug!("MASADEBUG {:?}.3.5: weight count: {:?}/{:?} for header {:?}", vote.round, self.weight, committee.quorum_threshold(), header.id);
+        debug!("MASADEBUG {:?}.3.5: vote weight count: {:?}/{:?} for header {:?}", vote.round, self.weight, committee.quorum_threshold(), header.id);
 
         if self.weight >= committee.quorum_threshold() {
             self.weight = 0; // Ensures quorum is only reached once.
@@ -64,7 +63,7 @@ impl VotesAggregator {
 pub struct CertificatesAggregator {
     weight: Stake,
     certificates: Vec<Certificate>,
-    used: HashSet<PublicKey>,
+    used: HashSet<HeaderDigest>,
 }
 
 impl CertificatesAggregator {
@@ -81,23 +80,31 @@ impl CertificatesAggregator {
         certificate: Certificate,
         committee: &Committee,
     ) -> Option<Vec<Certificate>> {
+        let round = certificate.round();
         let origin = certificate.origin();
+        let header_digest = certificate.header.id;
 
         // Ensure it is the first time this authority votes.
-        if !self.used.insert(origin.clone()) {
+        if !self.used.insert(header_digest.clone()) {
             return None;
         }
 
         self.certificates.push(certificate);
         self.weight += committee.stake(&origin);
-        return Some(self.certificates.drain(..).collect());
-        // if self.weight >= committee.quorum_threshold() {
-        //     // Note that we do not reset the weight here. If this function is called again and
-        //     // the proposer didn't yet advance round, we can add extra certificates as parents.
-        //     // This is required when running Bullshark as consensus and does not harm when running
-        //     // Tusk or an external consensus protocol.
-        //     return Some(self.certificates.drain(..).collect());
-        // }
-        // None
+
+        let weight = self.certificates.len();
+
+        debug!(
+            "MASADEBUG {:?}.3.6: certificate weight count: {:?}/{:?}",
+            round, weight, committee.quorum_threshold()
+        );
+        if weight >= committee.quorum_threshold() as usize {
+            // Note that we do not reset the weight here. If this function is called again and
+            // the proposer didn't yet advance round, we can add extra certificates as parents.
+            // This is required when running Bullshark as consensus and does not harm when running
+            // Tusk or an external consensus protocol.
+            return Some(self.certificates.drain(..).collect());
+        }
+        None
     }
 }
