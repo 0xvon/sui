@@ -334,6 +334,9 @@ impl Core {
             header.id
         );
         for vote in header.prev_votes.iter() {
+            if let Err(e) = self.sanitize_vote(&vote).await {
+                error!("Failed to sanitize vote: {}", e.to_string());
+            }
             if let Err(e) = self.process_vote(vote.clone()).await {
                 error!("Failed to process vote: {}", e.to_string());
             }
@@ -539,33 +542,14 @@ impl Core {
         Ok(())
     }
 
-    // async fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
-    //     // if vote.epoch > self.committee.epoch() {
-    //     //     self.try_update_committee().await;
-    //     // }
-    //     // ensure!(
-    //     //     self.committee.epoch() == vote.epoch,
-    //     //     DagError::InvalidEpoch {
-    //     //         expected: self.committee.epoch(),
-    //     //         received: vote.epoch
-    //     //     }
-    //     // );
-    //     // ensure!(
-    //     //     self.current_header.round <= vote.round,
-    //     //     DagError::VoteTooOld(vote.digest().into(), vote.round, self.current_header.round)
-    //     // );
+    async fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
+        if vote.epoch > self.committee.epoch() {
+            self.try_update_committee().await;
+        }
 
-    //     // // Ensure we receive a vote on the expected header.
-    //     // ensure!(
-    //     //     vote.id == self.current_header.id
-    //     //         && vote.origin == self.current_header.author
-    //     //         && vote.round == self.current_header.round,
-    //     //     DagError::UnexpectedVote(vote.id)
-    //     // );
-
-    //     // Verify the vote.
-    //     vote.verify(&self.committee).map_err(DagError::from)
-    // }
+        // Verify the vote.
+        vote.verify(&self.committee).map_err(DagError::from)
+    }
 
     /// If a new committee is available, update our internal state.
     async fn try_update_committee(&mut self) {
