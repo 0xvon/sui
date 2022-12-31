@@ -167,10 +167,9 @@ impl Core {
         self
     }
 
-    // MASATODO: process own header
+    // process own header
     #[instrument(level = "debug", skip_all, fields(header_digest = ?header.digest()))]
     async fn process_own_header(&mut self, header: Header) -> DagResult<()> {
-        debug!("MASADEBUG: HEADER CREATED");
         if header.epoch < self.committee.epoch() {
             debug!("Proposer outdated");
             return Ok(());
@@ -380,11 +379,6 @@ impl Core {
         );
         let vote_digest = vote.digest();
 
-        // MASATODO
-        // if let Err(e) = self.process_vote(vote).await {
-        //     error!("Failed to process our own vote: {}", e.to_string());
-        // }
-
         // Update the vote digest store with the vote we just sent.
         // We don't need to store the vote itself, since it can be reconstructed using the headers
         // that are stored in the header store. This strategy can be used to re-deliver votes to
@@ -428,22 +422,6 @@ impl Core {
                     certificate.header.round, certificate, vote.id
                 );
 
-                // Broadcast the certificate.
-                let network_keys = self
-                    .committee
-                    .others_primaries(&self.name)
-                    .into_iter()
-                    .map(|(_, _, network_key)| network_key)
-                    .collect();
-
-                // MASATODO: do not bloadcast Certificate to other nodes
-                let message = PrimaryMessage::Certificate(certificate.clone());
-                let handlers = self.network.broadcast(network_keys, &message).await;
-                self.cancel_handlers
-                    .entry(certificate.round())
-                    .or_insert_with(Vec::new)
-                    .extend(handlers);
-
                 self.metrics
                     .certificates_created
                     .with_label_values(&[&certificate.epoch().to_string()])
@@ -479,26 +457,6 @@ impl Core {
             .highest_received_round
             .with_label_values(&[&certificate.epoch().to_string(), certificate_source])
             .set(self.highest_received_round as i64);
-
-        // Let the proposer draw early conclusions from a certificate at this round and epoch, without its
-        // parents or payload (which we may not have yet).
-        //
-        // Since our certificate is well-signed, it shows a majority of honest signers stand at round r,
-        // so to make a successful proposal, our proposer must use parents at least at round r-1.
-        //
-
-        // Process the header embedded in the certificate if we haven't already voted for it (if we already
-        // voted, it means we already processed it). Since this header got certified, we are sure that all
-        // the data it refers to (ie. its payload and its parents) are available. We can thus continue the
-        // processing of the certificate even if we don't have them in store right now.
-        // if !self
-        //     .processing
-        //     .get(&certificate.header.round)
-        //     .map_or_else(|| false, |x| x.contains(&certificate.header.id))
-        // {
-        //     // This function may still throw an error if the storage fails.
-        //     self.process_header(&certificate.header).await?;
-        // }
 
         // Ensure we have all the ancestors of this certificate yet (if we didn't already garbage collect them).
         // If we don't, the synchronizer will gather them and trigger re-processing of this certificate.
@@ -641,32 +599,6 @@ impl Core {
     //     vote.verify(&self.committee).map_err(DagError::from)
     // }
 
-    // async fn sanitize_certificate(&mut self, certificate: &Certificate) -> DagResult<()> {
-    //     if certificate.epoch() > self.committee.epoch() {
-    //         self.try_update_committee().await;
-    //     }
-    //     ensure!(
-    //         self.committee.epoch() == certificate.epoch(),
-    //         DagError::InvalidEpoch {
-    //             expected: self.committee.epoch(),
-    //             received: certificate.epoch()
-    //         }
-    //     );
-    //     ensure!(
-    //         self.gc_round < certificate.round(),
-    //         DagError::TooOld(
-    //             certificate.digest().into(),
-    //             certificate.round(),
-    //             self.gc_round
-    //         )
-    //     );
-
-    //     // Verify the certificate (and the embedded header).
-    //     certificate
-    //         .verify(&self.committee, self.worker_cache.clone())
-    //         .map_err(DagError::from)
-    // }
-
     /// If a new committee is available, update our internal state.
     async fn try_update_committee(&mut self) {
         if self
@@ -710,26 +642,11 @@ impl Core {
                 // We receive here messages from other primaries.
                 Some(message) = self.rx_primaries.recv() => {
                     match message {
-                        // MASATODO: receive header from primary layer
                         PrimaryMessage::Header(header) => {
                             match self.sanitize_header(&header).await {
                                 Ok(()) => self.process_header(&header).await,
                                 error => error
                             }
-                        },
-                        PrimaryMessage::Vote(vote) => {
-                            Ok(())
-                            // match self.sanitize_vote(&vote).await {
-                            //     Ok(()) => self.process_vote(vote).await,
-                            //     error => error
-                            // }
-                        },
-                        PrimaryMessage::Certificate(certificate) => {
-                            Ok(())
-                            // match self.sanitize_certificate(&certificate).await {
-                            //     Ok(()) =>  self.process_certificate(certificate).await,
-                            //     error => error
-                            // }
                         },
                         _ => panic!("Unexpected core message")
                     }
@@ -769,7 +686,6 @@ impl Core {
                 Ok(()) = self.rx_consensus_round_updates.changed() => {
                     let round = *self.rx_consensus_round_updates.borrow();
                     if round > self.gc_depth {
-                        debug!("MASATODO: Round Changed");
                         let now = Instant::now();
 
                         let gc_round = round - self.gc_depth;
