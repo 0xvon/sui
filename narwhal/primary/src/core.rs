@@ -2,7 +2,7 @@
 // Copyright (c) Mysten Labs, Inc.
 // SPDX-License-Identifier: Apache-2.0
 use crate::{
-    aggregators::{CertificatesAggregator, VotesAggregator, VotesStore},
+    aggregators::{CertificatesAggregator, VotesAggregator},
     metrics::PrimaryMetrics,
     primary::PrimaryMessage,
     synchronizer::Synchronizer,
@@ -65,25 +65,17 @@ pub struct Core {
     rx_proposer: Receiver<Header>,
     /// Output all certificates to the consensus layer.
     tx_consensus: Sender<Certificate>,
-    /// Send valid a quorum of certificates' ids to the `Proposer` (along with their round).
-    tx_proposer: Sender<(Vec<Certificate>, Round, Epoch)>,
     /// Send valid a vote to the `Proposer` (along with their round).
     tx_proposer_vote: Sender<(Vote, Round, Epoch)>,
 
     /// The last garbage collected round.
     gc_round: Round,
-    /// Current round.
-    current_round: Round,
     /// The highest certificates round received by this node.
     highest_received_round: Round,
     /// The highest certificates round processed by this node.
     highest_processed_round: Round,
     /// The set of headers we are currently processing.
     processing: HashMap<Round, HashSet<HeaderDigest>>,
-    /// The last header we proposed (for which we are waiting votes).
-    current_headers: HashMap<HeaderDigest, Header>,
-    // current_header: Header,
-    votes_store: VotesStore,
     /// The store to persist the last voted round per authority, used to ensure idempotence.
     vote_digest_store: Store<PublicKey, RoundVoteDigestPair>,
     /// Aggregates votes into a certificate.
@@ -118,7 +110,6 @@ impl Core {
         rx_certificate_waiter: Receiver<Certificate>,
         rx_proposer: Receiver<Header>,
         tx_consensus: Sender<Certificate>,
-        tx_proposer: Sender<(Vec<Certificate>, Round, Epoch)>,
         tx_proposer_vote: Sender<(Vote, Round, Epoch)>,
         metrics: Arc<PrimaryMetrics>,
         primary_network: P2pNetwork,
@@ -140,16 +131,11 @@ impl Core {
                 rx_certificate_waiter,
                 rx_proposer,
                 tx_consensus,
-                tx_proposer,
                 tx_proposer_vote,
                 gc_round: 0,
-                current_round: 0,
                 highest_received_round: 0,
                 highest_processed_round: 0,
                 processing: HashMap::with_capacity(2 * gc_depth as usize),
-                votes_store: VotesStore::new(),
-                current_headers: HashMap::with_capacity(2 * gc_depth as usize),
-                // current_header: Header::default(),
                 vote_digest_store,
                 votes_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
                 certificates_aggregators: HashMap::with_capacity(2 * gc_depth as usize),
@@ -225,17 +211,6 @@ impl Core {
         } else {
             "other"
         };
-
-        // MASATODO: try to update round here
-        // if header.round > self.current_round {
-        //     debug!("MASADEBUG: go next round");
-        //     self.go_next_round();
-        // }
-
-        // Insert current header
-        self.current_headers
-            .entry(header.digest())
-            .or_insert(header.clone());
 
         // Indicate that we are processing this header.
         let inserted = self
@@ -424,7 +399,6 @@ impl Core {
             )
             .await;
 
-        // let prev_votes = self.votes_store.append(&self.committee, &vote);
         self.tx_proposer_vote
             .send((vote, header.round, header.epoch))
             .await
@@ -512,12 +486,6 @@ impl Core {
         // Since our certificate is well-signed, it shows a majority of honest signers stand at round r,
         // so to make a successful proposal, our proposer must use parents at least at round r-1.
         //
-        // This allows the proposer not to fire proposals at rounds strictly below the certificate we witnessed.
-        // let minimal_round_for_parents = certificate.round().saturating_sub(1);
-        // self.tx_proposer
-        //     .send((vec![], minimal_round_for_parents, certificate.epoch()))
-        //     .await
-        //     .map_err(|_| DagError::ShuttingDown)?;
 
         // Process the header embedded in the certificate if we haven't already voted for it (if we already
         // voted, it means we already processed it). Since this header got certified, we are sure that all
@@ -588,12 +556,6 @@ impl Core {
             .or_insert_with(|| Box::new(CertificatesAggregator::new()))
             .append(certificate.clone(), &self.committee)
         {
-            // Send it to the `Proposer`.
-            // self.tx_proposer
-            //     .send((parents, certificate.round(), certificate.epoch()))
-            //     .await
-            //     .map_err(|_| DagError::ShuttingDown)?;
-
             // Store header with parents
             let processing_headers = self.processing
                 .entry(certificate.round() + 1)
@@ -649,14 +611,6 @@ impl Core {
         // TODO [issue #672]: Prevent bad nodes from sending junk headers with high round numbers.
 
         Ok(())
-    }
-
-    fn go_next_round(&mut self) {
-        self.current_round += 1;
-        self.current_headers.clear();
-        self.votes_store.try_next(self.current_round);
-        self.votes_aggregators.clear();
-        self.certificates_aggregators.clear();
     }
 
     // async fn sanitize_vote(&mut self, vote: &Vote) -> DagResult<()> {
@@ -737,8 +691,6 @@ impl Core {
             error!("Error in change epoch when clearing vote store {}", e);
         }
         self.processing.clear();
-        self.current_headers.clear();
-        self.votes_store = VotesStore::new();
         self.votes_aggregators.clear();
         self.certificates_aggregators.clear();
         self.cancel_handlers.clear();
@@ -822,9 +774,6 @@ impl Core {
 
                         let gc_round = round - self.gc_depth;
                         self.processing.retain(|k, _| k > &gc_round);
-                        self.current_headers.clear();
-                        self.current_round = round;
-                        self.votes_store.try_next(round);
                         self.votes_aggregators.clear();
                         self.certificates_aggregators.retain(|k, _| k > &gc_round);
                         self.cancel_handlers.retain(|k, _| k > &gc_round);

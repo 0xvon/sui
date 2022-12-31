@@ -6,64 +6,12 @@ use config::{Committee, Stake};
 use crypto::{PublicKey, Signature};
 use fastcrypto::traits::EncodeDecodeBase64;
 use std::collections::HashSet;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::debug;
 use types::{
     ensure,
     error::{DagError, DagResult},
-    Certificate, Header, Vote, Round,
+    Certificate, Header, Vote,
 };
-
-/// Aggregate votes for current round's headers
-pub struct VotesStore {
-    weight: Stake,
-    votes: Vec<Vote>,
-    round: Round,
-}
-
-impl VotesStore {
-    pub fn new() -> Self {
-        Self {
-            weight: 0,
-            votes: Vec::new(),
-            round: 0,
-        }
-    }
-
-    pub fn try_next(&mut self, round: Round) {
-        if self.round < round {
-            info!("MASADEBUG: change round of votes_store to round {round}");
-            self.round = round;
-            self.votes.clear();
-            self.weight = 0;
-        }
-    }
-
-    pub fn append(
-        &mut self,
-        committee: &Committee,
-        vote: &Vote
-    ) -> Vec<Vote> {
-        let author = vote.author.clone();
-        // ensure!(
-        //     self.round == vote.round,
-        //     DagError::InvalidHeaderId
-        // );
-
-        self.votes.push(vote.clone());
-        self.weight += committee.stake(&author);
-        debug!("MASADEBUG {:?}.3.5: weight count: {:?}/{:?} for header {:?}", vote.round, self.weight, committee.quorum_threshold(), vote.id);
-
-        // quorum貯まらないとsome返さないのだと一生タイマーが進まない恐れがある
-        // if self.weight >= committee.quorum_threshold() {
-        //     self.weight = 0; // Ensures quorum is only reached once.
-        //     return Ok(Some(self.votes.clone()));
-        // }
-        // Ok(None)
-        return self.votes.clone();
-    }
-
-
-}
 
 /// Aggregates votes for a particular header into a certificate.
 pub struct VotesAggregator {

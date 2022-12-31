@@ -58,7 +58,6 @@ pub struct PrimaryChannelMetrics {
     /// occupancy of the channel from the `primary::WorkerReceiverHandler` to the `primary::Proposer`
     pub tx_our_digests: IntGauge,
     /// occupancy of the channel from the `primary::Core` to the `primary::Proposer`
-    pub tx_parents: IntGauge,
     pub tx_vote: IntGauge,
     /// occupancy of the channel from the `primary::Proposer` to the `primary::Core`
     pub tx_headers: IntGauge,
@@ -97,7 +96,6 @@ pub struct PrimaryChannelMetrics {
     /// total received on channel from the `primary::WorkerReceiverHandler` to the `primary::Proposer`
     pub tx_our_digests_total: IntCounter,
     /// total received on channel from the `primary::Core` to the `primary::Proposer`
-    pub tx_parents_total: IntCounter,
     pub tx_vote_total: IntCounter,
     /// total received on channel from the `primary::Proposer` to the `primary::Core`
     pub tx_headers_total: IntCounter,
@@ -166,13 +164,8 @@ impl PrimaryChannelMetrics {
                 "occupancy of the channel from the `primary::WorkerReceiverHandler` to the `primary::Proposer`",
                 registry
             ).unwrap(),
-            tx_parents: register_int_gauge_with_registry!(
-                "tx_vote",
-                "occupancy of the channel from the `primary::Core` to the `primary::Proposer`",
-                registry
-            ).unwrap(),
             tx_vote: register_int_gauge_with_registry!(
-                "tx_parents",
+                "tx_vote",
                 "occupancy of the vote channel from the `primary::Core` to the `primary::Proposer`",
                 registry
             ).unwrap(),
@@ -261,11 +254,6 @@ impl PrimaryChannelMetrics {
             tx_our_digests_total: register_int_counter_with_registry!(
                 "tx_our_digests_total",
                 "total received on channel from the `primary::WorkerReceiverHandler` to the `primary::Proposer`",
-                registry
-            ).unwrap(),
-            tx_parents_total: register_int_counter_with_registry!(
-                "tx_parents_total",
-                "total received on channel from the `primary::Core` to the `primary::Proposer`",
                 registry
             ).unwrap(),
             tx_vote_total: register_int_counter_with_registry!(

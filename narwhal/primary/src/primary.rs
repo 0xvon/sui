@@ -118,11 +118,6 @@ impl Primary {
             &primary_channel_metrics.tx_our_digests,
             &primary_channel_metrics.tx_our_digests_total,
         );
-        let (tx_parents, rx_parents) = channel_with_total(
-            CHANNEL_CAPACITY,
-            &primary_channel_metrics.tx_parents,
-            &primary_channel_metrics.tx_parents_total,
-        );
         let (tx_vote, rx_vote) = channel_with_total(
             CHANNEL_CAPACITY,
             &primary_channel_metrics.tx_vote,
@@ -349,7 +344,6 @@ impl Primary {
             /* rx_certificate_waiter */ rx_certificates_loopback,
             /* rx_proposer */ rx_headers,
             tx_consensus,
-            /* tx_proposer */ tx_parents,
             tx_vote,
             node_metrics.clone(),
             core_primary_network,
@@ -435,7 +429,6 @@ impl Primary {
             parameters.max_header_delay,
             network_model,
             tx_reconfigure.subscribe(),
-            /* rx_core */ rx_parents,
             rx_vote,
             /* rx_workers */ rx_our_digests,
             /* tx_core */ tx_headers,
