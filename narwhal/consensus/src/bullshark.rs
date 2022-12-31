@@ -82,8 +82,6 @@ impl ConsensusProtocol for Bullshark {
         //     return Ok(Vec::new());
         // }
 
-        debug!("AAAAA");
-
         // Get an ordered list of past leaders that are linked to the current leader.
         debug!("Leader {:?} has enough support", leader);
         let mut sequence = Vec::new();

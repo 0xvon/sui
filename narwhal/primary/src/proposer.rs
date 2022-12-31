@@ -107,7 +107,7 @@ impl Proposer {
                 proposer_store,
                 round: 0,
                 last_parents: genesis,
-                prev_votes: HashMap::with_capacity(2000),
+                prev_votes: HashMap::with_capacity(3000),
                 last_leader: None,
                 digests: Vec::with_capacity(2 * max_header_num_of_batches),
                 metrics,
@@ -127,12 +127,12 @@ impl Proposer {
             self.committee.epoch(),
             self.digests.drain(..num_of_digests).collect(),
             vec![].drain(..).map(|x| x).collect(),
-            self.prev_votes.entry(self.round).or_default().drain(..).collect(),
+            self.prev_votes.entry(self.round - 1).or_default().drain(..).collect(),
             &mut self.signature_service,
         )
         .await;
         debug!("Created {header:?}");
-        debug!("for votes {}", self.prev_votes.len());
+        debug!("for votes {}", header.prev_votes.len());
 
         // Equivocation protection using the proposer store
         if let Some(last_header) = self.proposer_store.get_last_proposed()? {
@@ -213,16 +213,16 @@ impl Proposer {
     /// Check whether if we have (i) f+1 votes for the leader, (ii) 2f+1 nodes not voting for the leader,
     /// or (iii) there is no leader to vote for. This is only relevant in partial synchrony.
     fn enough_votes(&mut self) -> bool {
-        debug!(
-            "MASADEBUG: enough_votes called {:?}/{:?}",
-            self.prev_votes.len(),
-            self.committee.quorum_threshold()
-        );
         // return self.prev_votes.len() >= self.committee.quorum_threshold() as usize;
         let vote_len = self.prev_votes
             .entry(self.round)
             .or_insert_with(Vec::new)
             .len();
+        debug!(
+            "MASADEBUG: enough_votes called {:?}/{:?}",
+            vote_len,
+            self.committee.quorum_threshold()
+        );
         return vote_len > 0;
         // let leader = match &self.last_leader {
         //     Some(x) => x.digest(),
@@ -362,12 +362,6 @@ impl Proposer {
                             debug!("MASADEBUG: greater, count {}", self.prev_votes.len());
                             // self.round = round;
                             // self.prev_votes = prev_votes;
-                            if self.prev_votes
-                                .entry(round)
-                                .or_insert_with(Vec::new)
-                                .contains(&prev_vote) {
-                                    debug!("MASADEBUG: found");
-                                }
 
                             self.prev_votes
                                 .entry(round)
@@ -382,15 +376,6 @@ impl Proposer {
                             // The core gives us the parents the first time they are enough to form a quorum.
                             // Then it keeps giving us all the extra parents.
                             debug!("MASADEBUG: equal");
-
-                            if self.prev_votes
-                                .entry(round)
-                                .or_insert_with(Vec::new)
-                                .contains(&prev_vote) {
-                                    debug!("MASADEBUG: found");
-                                } else {
-                                    debug!("MASADEBUG: not found");
-                                }
 
                             self.prev_votes
                                 .entry(round)

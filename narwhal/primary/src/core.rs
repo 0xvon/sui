@@ -227,10 +227,10 @@ impl Core {
         };
 
         // MASATODO: try to update round here
-        if header.round > self.current_round {
-            debug!("MASADEBUG: go next round");
-            self.go_next_round();
-        }
+        // if header.round > self.current_round {
+        //     debug!("MASADEBUG: go next round");
+        //     self.go_next_round();
+        // }
 
         // Insert current header
         self.current_headers
@@ -424,9 +424,9 @@ impl Core {
             )
             .await;
 
-        let prev_votes = self.votes_store.append(&self.committee, &vote);
+        // let prev_votes = self.votes_store.append(&self.committee, &vote);
         self.tx_proposer_vote
-            .send((vote, self.current_round, header.epoch))
+            .send((vote, header.round, header.epoch))
             .await
             .map_err(|_| DagError::ShuttingDown)?;
 
@@ -438,7 +438,7 @@ impl Core {
     async fn process_vote(&mut self, vote: Vote) -> DagResult<()> {
         debug!(
             "MASADEBUG {:?}.5: Processing Vote {:?} for header {:?}",
-            vote.round, vote, vote.id
+            vote.round + 1, vote, vote.id
         );
     
         if let Some(header) = self.header_store.read(vote.id).await? {
@@ -491,7 +491,7 @@ impl Core {
     async fn process_certificate(&mut self, certificate: Certificate) -> DagResult<()> {
         debug!(
             "MASADEBUG {:?}.5: Processing Certificate {:?}",
-            certificate.round(),
+            certificate.round() + 1,
             certificate
         );
 
@@ -513,11 +513,11 @@ impl Core {
         // so to make a successful proposal, our proposer must use parents at least at round r-1.
         //
         // This allows the proposer not to fire proposals at rounds strictly below the certificate we witnessed.
-        let minimal_round_for_parents = certificate.round().saturating_sub(1);
-        self.tx_proposer
-            .send((vec![], minimal_round_for_parents, certificate.epoch()))
-            .await
-            .map_err(|_| DagError::ShuttingDown)?;
+        // let minimal_round_for_parents = certificate.round().saturating_sub(1);
+        // self.tx_proposer
+        //     .send((vec![], minimal_round_for_parents, certificate.epoch()))
+        //     .await
+        //     .map_err(|_| DagError::ShuttingDown)?;
 
         // Process the header embedded in the certificate if we haven't already voted for it (if we already
         // voted, it means we already processed it). Since this header got certified, we are sure that all
@@ -588,10 +588,6 @@ impl Core {
             .or_insert_with(|| Box::new(CertificatesAggregator::new()))
             .append(certificate.clone(), &self.committee)
         {
-            debug!(
-                "MASADEBUG {:?}.8: Parents created!!!",
-                certificate.header.round
-            );
             // Send it to the `Proposer`.
             // self.tx_proposer
             //     .send((parents, certificate.round(), certificate.epoch()))
@@ -600,7 +596,7 @@ impl Core {
 
             // Store header with parents
             let processing_headers = self.processing
-                .entry(certificate.header.round)
+                .entry(certificate.round() + 1)
                 .or_default()
                 .drain()
                 .collect_vec();
@@ -611,15 +607,21 @@ impl Core {
                 }
             }
 
-            let before = self.cancel_handlers.len();
-            if certificate.round() > 0 {
-                self.cancel_handlers
-                    .retain(|k, _| *k >= certificate.round() - 1);
+            if parents.len() >= self.committee.quorum_threshold() as usize {
+                debug!(
+                    "MASADEBUG {:?}.8: Parents created!!!",
+                    certificate.header.round
+                );
+                let before = self.cancel_handlers.len();
+                if certificate.round() > 0 {
+                    self.cancel_handlers
+                        .retain(|k, _| *k >= certificate.round() - 1);
+                }
+                debug!(
+                    "Pruned {} messages from obsolete rounds.",
+                    before.saturating_sub(self.cancel_handlers.len())
+                );
             }
-            debug!(
-                "Pruned {} messages from obsolete rounds.",
-                before.saturating_sub(self.cancel_handlers.len())
-            );
         }
 
         Ok(())
